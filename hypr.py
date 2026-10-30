@@ -7,7 +7,8 @@ import os
 import socket
 
 
-def request(command):
+def command(text):
+    """A request to Hyprland; its reply as text, or None outside Hyprland."""
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
     if not runtime or not instance:
@@ -16,12 +17,21 @@ def request(command):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.2)
             sock.connect(os.path.join(runtime, "hypr", instance, ".socket.sock"))
-            sock.sendall(f"j/{command}".encode())
+            sock.sendall(text.encode())
             chunks = []
             while data := sock.recv(65536):
                 chunks.append(data)
-        return json.loads(b"".join(chunks))
-    except (OSError, ValueError):
+        return b"".join(chunks).decode(errors="replace")
+    except OSError:
+        return None
+
+
+def request(name):
+    """A query answered in JSON (cursorpos, monitors, clients...), or None."""
+    reply = command(f"j/{name}")
+    try:
+        return json.loads(reply) if reply else None
+    except ValueError:
         return None
 
 
@@ -40,3 +50,4 @@ def monitors():
         found.append({"name": m["name"], "x": m["x"], "y": m["y"],
                       "width": round(w), "height": round(h), "focused": m.get("focused", False)})
     return found
+

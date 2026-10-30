@@ -21,11 +21,15 @@ class Prefs(Gtk.Window):
         self._scale("Spin speed", "rpm", 0, 45, 0.5, "{:.1f} rpm", float)
         self._scale("Spectrum ring", "visualizer", 0, 1, 0.05, "{:.0%}", float)
         self._scale("Beat pulse", "pulse", 0, 1, 0.05, "{:.0%}", float)
+        self._scale("Sync offset", "sync_offset", -100, 400, 5, "{:+.0f} ms", int)
+        self._combo("Pulse follows", "follow", [("hits", "Hits (drums, accents)"),
+                                                ("notes", "Every note of the lead")])
         self._combo("Record", "style", [("picture", "Picture disc"),
                                         ("label", "Black vinyl, cover label")])
         self._combo("Track info", "track_info", [("always", "Always"), ("hover", "On hover"),
                                                  ("off", "Off")])
         self._combo("Sits", "layer", [("top", "Above windows"), ("bottom", "On the desktop")])
+        self._switch("Vocals first", "vocals_first")
         self._switch("Tonearm", "tonearm")
         self._switch("Hide while Spotify is closed", "hide_when_closed")
 

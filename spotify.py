@@ -16,6 +16,9 @@ import gi
 
 gi.require_version("Playerctl", "2.0")
 from gi.repository import GLib, Playerctl  # noqa: E402
+
+_LOOPS = {"None": Playerctl.LoopStatus.NONE, "Track": Playerctl.LoopStatus.TRACK,
+          "Playlist": Playerctl.LoopStatus.PLAYLIST}
 from PIL import Image, ImageOps  # noqa: E402
 
 COVER_SIZE = 1024
@@ -28,6 +31,7 @@ SIZE_FULL = "ab67616d000082c1"
 
 @dataclass(frozen=True)
 class Track:
+    id: str = ""          # MPRIS track id, e.g. /com/spotify/track/...
     title: str = ""
     artist: str = ""
     art_url: str = ""
@@ -82,6 +86,42 @@ class Spotify:
     def previous(self):
         self._call("previous")
 
+    def has_track(self, uri):
+        """Whether a spotify:track: URI is the current track (MPRIS gives its id
+        as /com/spotify/track/<id>, older clients as spotify:track:<id>)."""
+        want = uri.rsplit(":", 1)[-1] if uri else ""
+        have = self.track.id.replace(":", "/").rsplit("/", 1)[-1] if self.track.id else ""
+        return bool(want) and want == have
+
+    def play(self):
+        self._call("play")
+
+    def open_uri(self, uri):
+        """Plays a spotify: URI (a track, album or playlist) right away."""
+        if self.player and uri:
+            try:
+                self.player.open(uri)
+            except GLib.Error:
+                pass
+
+    @property
+    def loop(self):
+        """The player's repeat mode: "None", "Track" or "Playlist" (None if unknown)."""
+        if self.player:
+            try:
+                status = self.player.props.loop_status
+            except GLib.Error:
+                return None
+            return next((k for k, v in _LOOPS.items() if v == status), None)
+        return None
+
+    def set_loop(self, mode):
+        if self.player and mode in _LOOPS:
+            try:
+                self.player.set_loop_status(_LOOPS[mode])
+            except GLib.Error:
+                pass
+
     def _call(self, method):
         if self.player:
             try:
@@ -118,6 +158,7 @@ class Spotify:
         if player:
             self.playing = player.props.playback_status == Playerctl.PlaybackStatus.PLAYING
             self.track = Track(
+                id=_read(lambda: player.print_metadata_prop("mpris:trackid")),
                 title=_read(player.get_title),
                 artist=_read(player.get_artist),
                 art_url=_read(lambda: player.print_metadata_prop("mpris:artUrl")),
