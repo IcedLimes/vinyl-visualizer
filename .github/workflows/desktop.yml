@@ -111,6 +111,38 @@ jobs:
           path: packages/*
           if-no-files-found: error
 
+      # Once more on the machine's real desktop (not offscreen), so the native
+      # window calls run against real windows. Not every CI machine has a
+      # desktop session, so this only reports.
+      - name: Self-test on the desktop
+        continue-on-error: true
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: ""
+        run: |
+          status=0
+          python vinyl_desktop.py --self-test selftest-desktop.txt || status=$?
+          cat selftest-desktop.txt
+          exit $status
+
+      # CI machines have no graphics driver with OpenGL 3.3, so this draws the
+      # record once with Mesa's software renderer instead. Last, so the build
+      # above can't pick up Mesa's DLLs.
+      - name: OpenGL check with Mesa (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+          $asset = $release.assets | Where-Object { $_.name -like "*release-msvc.7z" } | Select-Object -First 1
+          Invoke-WebRequest $asset.browser_download_url -OutFile mesa.7z
+          7z x mesa.7z -omesa -y | Out-Null
+          Copy-Item mesa\x64\*.dll (Split-Path (Get-Command python).Source)
+          python -c "from desktop.selftest import _opengl; print('OpenGL:', _opengl())"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

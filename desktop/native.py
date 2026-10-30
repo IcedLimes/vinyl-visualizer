@@ -12,6 +12,18 @@ APP_NAME = "Vinyl"
 LABEL = "io.github.vinyl-visualizer"
 
 
+def _real_window(fn, skipped=None):
+    """Runs fn only for a real window: Qt's offscreen platform (the
+    self-test's) has no native window behind the widget."""
+    def call(widget, *args):
+        from PySide6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() == "offscreen":
+            return skipped
+        return fn(widget, *args)
+    call.__doc__ = fn.__doc__
+    return call
+
+
 def command():
     """How to start this copy of Vinyl: the packaged app, or the script."""
     if getattr(sys, "frozen", False):
@@ -39,6 +51,8 @@ if sys.platform == "win32":
     _set_style = getattr(_user32, "SetWindowLongPtrW", _user32.SetWindowLongW)
     _set_style.restype = ctypes.c_ssize_t
     _set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                      ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 
@@ -52,14 +66,38 @@ if sys.platform == "win32":
         if new != old:
             _set_style(hwnd, GWL_EXSTYLE, new)
 
+    @_real_window
     def prepare(widget):
         """No focus when clicked (keys stay with your window), no taskbar button."""
         _style(widget, add=WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
 
+    @_real_window
     def set_click_through(widget, through):
         _style(widget, add=WS_EX_TRANSPARENT if through else 0,
                remove=0 if through else WS_EX_TRANSPARENT)
 
+    def focus_for_menu(widget):
+        """Lets the record be the foreground window while its menu is open;
+        returns what gives the foreground back to the window you were in."""
+        previous = _user32.GetForegroundWindow()
+        _style(widget, remove=WS_EX_NOACTIVATE)
+        _user32.SetForegroundWindow(_hwnd(widget))
+
+        def give_back():
+            _style(widget, add=WS_EX_NOACTIVATE)
+            if previous and _user32.GetForegroundWindow() == int(widget.winId()):
+                _user32.SetForegroundWindow(previous)
+        return give_back
+
+    focus_for_menu = _real_window(focus_for_menu, skipped=lambda: None)
+
+    def note_front_app():
+        pass
+
+    def give_back_front_app():
+        pass  # WS_EX_NOACTIVATE: a click never took it
+
+    @_real_window
     def set_layer(widget, layer):
         hwnd = _hwnd(widget)
         flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
@@ -90,7 +128,7 @@ if sys.platform == "win32":
 
 elif sys.platform == "darwin":
     import objc
-    from AppKit import NSPanel
+    from AppKit import NSApplication, NSPanel, NSWorkspace
 
     # NSWindow levels and behaviours
     FLOATING = 3                      # NSFloatingWindowLevel: above app windows
@@ -103,6 +141,7 @@ elif sys.platform == "darwin":
         view = objc.objc_object(c_void_p=int(widget.winId()))
         return view.window()
 
+    @_real_window
     def prepare(widget):
         """On every Space and beside full-screen apps, out of the window
         cycle, and a click doesn't bring Vinyl to the front."""
@@ -115,11 +154,31 @@ elif sys.platform == "darwin":
             win.setStyleMask_(win.styleMask() | NONACTIVATING_PANEL)
             win.setHidesOnDeactivate_(False)
 
+    @_real_window
     def set_click_through(widget, through):
         win = _window(widget)
         if win is not None and bool(win.ignoresMouseEvents()) != through:
             win.setIgnoresMouseEvents_(through)
 
+    def focus_for_menu(widget):
+        return lambda: None  # Qt closes popups on clicks in other apps by itself
+
+    _front = None
+
+    def note_front_app():
+        """Remembers the app in front as a click on the record begins."""
+        global _front
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is not None and app.processIdentifier() != os.getpid():
+            _front = app
+
+    def give_back_front_app():
+        """If the click brought Vinyl to the front after all, hand the front
+        back, so your keys keep going to the app you were using."""
+        if _front is not None and NSApplication.sharedApplication().isActive():
+            _front.activateWithOptions_(0)
+
+    @_real_window
     def set_layer(widget, layer):
         win = _window(widget)
         if win is not None:
@@ -144,6 +203,15 @@ else:
     def set_click_through(widget, through):
         pass
 
+    def focus_for_menu(widget):
+        return lambda: None
+
+    def note_front_app():
+        pass
+
+    def give_back_front_app():
+        pass
+
     def set_layer(widget, layer):
         pass
 
@@ -159,12 +227,3 @@ def log_path():
     import settings
     return settings.PATH.with_name("vinyl.log")
 
-
-def open_log_folder():
-    folder = str(log_path().parent)
-    if sys.platform == "win32":
-        os.startfile(folder)
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", folder])
-    else:
-        subprocess.Popen(["xdg-open", folder])

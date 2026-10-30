@@ -118,8 +118,10 @@ class Overlay(QWidget):
             self.renderer = Renderer()
         except Exception as e:
             self.renderer = None
-            QMessageBox.critical(None, "Vinyl", "Vinyl needs OpenGL 3.3 to draw the record, "
-                                 f"which this computer's graphics driver doesn't offer.\n\n{e}")
+            problem = f"Vinyl needs OpenGL 3.3 to draw the record, which this computer's " \
+                      f"graphics driver doesn't offer.\n\n{e}"
+            print(f"vinyl: {problem}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(None, "Vinyl", problem))
         self.analyzer = Analyzer()
         self.capture = open_capture(args.audio)
         self.capture.start()
@@ -390,6 +392,7 @@ class Overlay(QWidget):
         elif event.button() == Qt.MouseButton.LeftButton:
             self._press = {"at": event.globalPosition().toPoint(), "pos": self.pos(),
                            "moved": False}
+            native.note_front_app()
 
     def mouseMoveEvent(self, event):
         p = self._press
@@ -417,6 +420,7 @@ class Overlay(QWidget):
             if self.lay.reach(pos.x(), pos.y()) <= CENTER:
                 self.player.play_pause()
         self._press = None
+        native.give_back_front_app()
         self._poll_pointer()
 
     def wheelEvent(self, event):
@@ -435,7 +439,8 @@ class Overlay(QWidget):
                 item.setCheckable(True)
                 item.setChecked(checked)
             item.setEnabled(enabled)
-            item.triggered.connect(lambda *_: action())
+            # after the menu has closed and handed the focus back (see _show_menu)
+            item.triggered.connect(lambda *_: QTimer.singleShot(0, action))
             menu.addAction(item)
             return item
 
@@ -471,11 +476,16 @@ class Overlay(QWidget):
         add("Quit", self.app.quit)
 
     def _show_menu(self, at):
+        """The record never takes focus, but a menu needs it while it's open:
+        without it, a click elsewhere wouldn't close it. So it takes it for
+        the menu and hands it back to your window afterwards."""
         menu = QMenu(self)
         self._fill_menu(menu)
         self._menu_open = True
         menu.aboutToHide.connect(lambda: setattr(self, "_menu_open", False))
+        give_back = native.focus_for_menu(self)
         menu.exec(at)
+        give_back()
 
     def _build_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():

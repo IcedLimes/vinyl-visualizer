@@ -76,8 +76,9 @@ class SpotifyWindows(Player):
         if props.thumbnail is None:
             return None
         stream = await props.thumbnail.open_read_async()
-        buffer = Buffer(stream.size)
-        await stream.read_async(buffer, buffer.capacity, InputStreamOptions.READ_AHEAD)
+        # It may hand back a different buffer from the one it's given.
+        buffer = await stream.read_async(Buffer(stream.size), stream.size,
+                                         InputStreamOptions.READ_AHEAD)
         try:
             return bytes(memoryview(buffer))
         except TypeError:  # an older pywinrt without the buffer protocol

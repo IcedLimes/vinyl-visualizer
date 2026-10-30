@@ -29,6 +29,7 @@ def run(path):
                                             "darwin": "desktop.capture_macos"}, "audio"))
     check("platform libraries", _platform)
     check("settings window", _qt)
+    check("overlay", _overlay)
     check("Spotify reader, live", _player_live, required=False)  # no Spotify on CI: None is fine
     check("OpenGL", _opengl, required=False)  # CI machines often have no OpenGL 3.3
     lines.append("passed" if not failed else "failed: " + ", ".join(failed))
@@ -147,3 +148,43 @@ def _opengl():
     if alpha < 200:
         raise AssertionError(f"the record didn't draw (alpha {alpha} at its middle)")
     return f"{image.width()}x{image.height()}, {renderer.ctx.info['GL_RENDERER']}"
+
+
+def _overlay():
+    """The whole overlay for a moment: frames, pointer checks, menus, a
+    resize, hiding and showing, and the native window calls."""
+    import time
+    import types
+    from PySide6.QtWidgets import QApplication, QMenu
+    from desktop import native
+    from desktop.app import Overlay
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    overlay = Overlay(app, types.SimpleNamespace(audio="spotify"))
+    try:
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end:
+            app.processEvents()
+            time.sleep(0.02)
+        overlay._frame()
+        overlay._poll_pointer()
+        menu, tray = QMenu(), QMenu()
+        overlay._fill_menu(menu)
+        overlay._fill_menu(tray, tray=True)
+        overlay.change(size=300)
+        overlay.toggle()
+        overlay.toggle()
+        app.processEvents()
+        native.focus_for_menu(overlay)()
+        native.set_click_through(overlay, True)
+        native.set_click_through(overlay, False)
+        native.set_layer(overlay, "bottom")
+        native.set_layer(overlay, "top")
+        native.note_front_app()
+        native.give_back_front_app()
+        return (f"{overlay.width()}x{overlay.height()} at {overlay.pos().toTuple()} on "
+                f"{app.platformName()}, {len(menu.actions())}/{len(tray.actions())} menu items, "
+                f"drawing {'on' if overlay.renderer else 'off'}")
+    finally:
+        overlay.capture.stop()
+        overlay.player.stop()
+        overlay.close()
