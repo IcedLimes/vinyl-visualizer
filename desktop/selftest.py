@@ -156,8 +156,9 @@ def _overlay():
     import time
     import types
     from PySide6.QtWidgets import QApplication, QMenu
-    from desktop import native
+    from desktop import app as overlay_app, native
     from desktop.app import Overlay
+    overlay_app.complain = print  # no dialog: it would wait for a click that never comes
     app = QApplication.instance() or QApplication(sys.argv[:1])
     overlay = Overlay(app, types.SimpleNamespace(audio="spotify"))
     try:

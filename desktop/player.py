@@ -130,12 +130,15 @@ class Player(QObject):
             except Exception as e:  # the player went away mid-call, or answered oddly
                 print(f"vinyl: couldn't read Spotify: {e}")
                 state = None
-            self._read_now.emit(state)
-            if state and state.track.art_url != self._cover_key:
-                self._fetch_cover(state)
-            elif state is None and self._cover_key:
-                self._cover_key = None
-                self.cover.emit(None)
+            try:
+                self._read_now.emit(state)
+                if state and state.track.art_url != self._cover_key:
+                    self._fetch_cover(state)
+                elif state is None and self._cover_key:
+                    self._cover_key = None
+                    self.cover.emit(None)
+            except RuntimeError:  # the app has quit under us and taken the signals with it
+                return
 
     def _fetch_cover(self, state):
         key = state.track.art_url

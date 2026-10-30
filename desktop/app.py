@@ -120,8 +120,7 @@ class Overlay(QWidget):
             self.renderer = None
             problem = f"Vinyl needs OpenGL 3.3 to draw the record, which this computer's " \
                       f"graphics driver doesn't offer.\n\n{e}"
-            print(f"vinyl: {problem}")
-            QTimer.singleShot(0, lambda: QMessageBox.critical(None, "Vinyl", problem))
+            QTimer.singleShot(0, lambda: complain(problem))
         self.analyzer = Analyzer()
         self.capture = open_capture(args.audio)
         self.capture.start()
@@ -508,6 +507,12 @@ ICON = Path(__file__).resolve().parent.parent / "packaging" / "icon.png"
 
 def app_icon():
     return QIcon(str(ICON)) if ICON.exists() else tray_icon()
+
+
+def complain(problem):
+    """Tells you something's wrong (and the log, for the packaged app)."""
+    print(f"vinyl: {problem}")
+    QMessageBox.critical(None, "Vinyl", problem)
 
 
 def tray_icon():
