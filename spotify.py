@@ -5,12 +5,8 @@ The client publishes the track, its cover URL and the playback position
 itself, so this needs no Spotify developer app or login.
 """
 
-import functools
-import io
 import threading
 import time
-import urllib.request
-from dataclasses import dataclass
 
 import gi
 
@@ -19,23 +15,7 @@ from gi.repository import GLib, Playerctl  # noqa: E402
 
 _LOOPS = {"None": Playerctl.LoopStatus.NONE, "Track": Playerctl.LoopStatus.TRACK,
           "Playlist": Playerctl.LoopStatus.PLAYLIST}
-from PIL import Image, ImageOps  # noqa: E402
-
-COVER_SIZE = 1024
-
-# Spotify's CDN serves each cover at several sizes. MPRIS reports the 640px
-# one; this prefix is the full-size original.
-SIZE_640 = "ab67616d0000b273"
-SIZE_FULL = "ab67616d000082c1"
-
-
-@dataclass(frozen=True)
-class Track:
-    id: str = ""          # MPRIS track id, e.g. /com/spotify/track/...
-    title: str = ""
-    artist: str = ""
-    art_url: str = ""
-    length: float = 0.0  # seconds; 0 when unknown
+from media import Track, load_cover  # noqa: E402  (Track is re-exported for callers)
 
 
 class Spotify:
@@ -218,28 +198,3 @@ def _number(text):
         return float(text)
     except ValueError:
         return 0.0
-
-
-@functools.lru_cache(maxsize=16)  # skipping back and forth stays instant
-def load_cover(url):
-    data = None
-    if SIZE_640 in url:
-        try:
-            data = download(url.replace(SIZE_640, SIZE_FULL))
-        except Exception:  # fall back to the size MPRIS gave us
-            pass
-    if data is None:
-        data = download(url)
-    return to_black_and_white(Image.open(io.BytesIO(data)))
-
-
-def download(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "vinyl-visualizer"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return resp.read()
-
-
-def to_black_and_white(image):
-    image = ImageOps.exif_transpose(image).convert("L")
-    image = ImageOps.fit(image, (COVER_SIZE, COVER_SIZE), Image.LANCZOS)
-    return ImageOps.autocontrast(image, cutoff=0.5)

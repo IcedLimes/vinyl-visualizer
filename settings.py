@@ -2,10 +2,21 @@
 
 import copy
 import json
+import os
 import re
+import sys
 from pathlib import Path
 
-PATH = Path.home() / ".config" / "vinyl-visualizer" / "settings.json"
+
+def _folder():
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+
+
+PATH = _folder() / "vinyl-visualizer" / "settings.json"
 
 # shadows, highlights, accent. The cover is drawn in shadows → highlights
 # (a duotone), the spectrum ring, tonearm and text in the accent.
@@ -20,7 +31,7 @@ DEFAULTS = {
     "size": 380,              # record diameter, px
     "x": None,                # overlay's top-left on its monitor; None = right edge, centred
     "y": None,
-    "monitor": None,          # Hyprland monitor name
+    "monitor": None,          # the monitor's name (Hyprland's, or the screen's on Windows and macOS)
     "layer": "top",           # "top": above windows; "bottom": on the desktop, under windows
     "style": "picture",       # "picture": cover across the record; "label": black vinyl, cover label
     "rpm": 8.0,

@@ -1,0 +1,139 @@
+# Builds Vinyl for Windows and macOS. Pushing a tag like v0.1.0 also
+# publishes the packages as a pre-release; run it by hand to only build.
+name: Windows and macOS packages
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          - os: macos-latest
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      QT_QPA_PLATFORM: offscreen  # the self-tests run without a screen
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-dev"; fi
+          echo "VINYL_VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-desktop.txt pyinstaller
+
+      - name: Self-test (from source)
+        shell: bash
+        run: |
+          status=0
+          python vinyl_desktop.py --self-test selftest-source.txt || status=$?
+          cat selftest-source.txt
+          exit $status
+
+      - name: Windows icon
+        if: runner.os == 'Windows'
+        run: python -c "from PIL import Image; Image.open('packaging/icon.png').save('packaging/icon.ico', sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])"
+
+      - name: Build
+        run: pyinstaller --noconfirm packaging/vinyl.spec
+
+      - name: Self-test (package, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD "selftest-package.txt"
+          $p = Start-Process -FilePath "dist\Vinyl\Vinyl.exe" -ArgumentList "--self-test", "`"$out`"" -Wait -PassThru
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+
+      - name: Self-test (package, macOS)
+        if: runner.os == 'macOS'
+        run: |
+          status=0
+          dist/Vinyl.app/Contents/MacOS/Vinyl --self-test "$PWD/selftest-package.txt" || status=$?
+          cat selftest-package.txt
+          codesign --verify --deep --strict dist/Vinyl.app && echo "signature ok (ad hoc)"
+          exit $status
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "Vinyl-$env:VINYL_VERSION-${{ matrix.target }}"
+          Compress-Archive -Path dist\Vinyl -DestinationPath "dist\$name-portable.zip"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc "/DAppVersion=$env:VINYL_VERSION" packaging\vinyl.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force packages | Out-Null
+          Move-Item "dist\$name-portable.zip", "dist\Vinyl-$env:VINYL_VERSION-windows-x64-setup.exe" packages
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dmg packages
+          cp -R dist/Vinyl.app dmg/
+          ln -s /Applications dmg/Applications
+          name="Vinyl-$VINYL_VERSION-${{ matrix.target }}.dmg"
+          for attempt in 1 2 3; do  # hdiutil is sometimes busy on CI machines
+            hdiutil create -volname Vinyl -srcfolder dmg -ov -format UDZO "packages/$name" && break
+            sleep 5
+          done
+          test -f "packages/$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vinyl-${{ matrix.target }}
+          path: packages/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-${{ matrix.target }}
+          path: selftest-*.txt
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vinyl-*
+          path: packages
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Vinyl ${{ github.ref_name }} for Windows and macOS (experimental)
+          body_path: packaging/release-notes.md
+          prerelease: true
+          files: packages/*

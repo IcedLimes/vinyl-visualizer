@@ -1,7 +1,8 @@
 # Vinyl
 
 A minimal Spotify visualizer for Linux: the current track's cover, in black and
-white, on a slowly spinning record that floats over your desktop.
+white, on a slowly spinning record that floats over your desktop. Windows and
+macOS versions are [in testing](#windows-and-macos-experimental).
 
 ![Vinyl as a picture disc and as black vinyl with the cover as its label](docs/preview.png)
 
@@ -24,7 +25,7 @@ It needs no Spotify account setup or API keys. It reads the track and cover
 from the Spotify desktop app over MPRIS. It listens only to Spotify's own audio
 stream, so notifications and other apps don't move it.
 
-## Requirements
+## Requirements (Linux)
 
 - Linux with the **Spotify desktop app**
 - **PipeWire** (with pipewire-pulse) or **PulseAudio**
@@ -46,7 +47,7 @@ and prints the exact command for anything missing. For reference:
 `libpulse` and `pulseaudio-utils` only provide the `parec` and `pactl` command
 line tools. They work alongside PipeWire and don't replace it.
 
-## Install
+## Install on Linux
 
 ```sh
 git clone https://github.com/IcedLimes/vinyl-visualizer.git
@@ -60,6 +61,32 @@ menu. Nothing is installed system-wide. Keep the folder where it is; if you
 move it, run `./install.sh` again.
 
 To update: `git pull && ./install.sh`.
+
+## Windows and macOS (experimental)
+
+Download the installer for Windows 10/11 or the disk image for macOS 13+ from
+the [Releases page](https://github.com/IcedLimes/vinyl-visualizer/releases).
+The release notes explain how to get past the warnings Windows and macOS show
+for unsigned apps, and which permissions macOS asks for. These builds are new
+and haven't been tried on real machines yet, so please
+[report](https://github.com/IcedLimes/vinyl-visualizer/issues) anything that
+doesn't work.
+
+They work like the Linux version: the same record, menu and settings, with
+these differences:
+
+- Vinyl lives in the **tray** (Windows) or the **menu bar** (macOS) and shows
+  the record while Spotify is open. Turn on **Start at login** in its menu so
+  it's always ready.
+- **Windows** reads the track from the system media controls and hears
+  everything you hear, not just Spotify. **macOS** reads the track from
+  Spotify over AppleScript and hears only Spotify, through ScreenCaptureKit.
+- The delay over Bluetooth isn't measured, so set **Sync offset** by ear.
+- Settings are saved in `%APPDATA%\vinyl-visualizer` (Windows) or
+  `~/Library/Application Support/vinyl-visualizer` (macOS).
+
+To run it from source instead: `pip install -r requirements-desktop.txt`, then
+`python vinyl_desktop.py`.
 
 ## Use
 
@@ -172,8 +199,11 @@ remove that too.
 | --- | --- |
 | `vinyl.py` | The overlay: GTK 3 layer-shell window, mouse and keyboard, menu, animation |
 | `disc.frag`, `disc.py` | The record, ring and tonearm, drawn by one OpenGL shader (moderngl) |
-| `spotify.py` | Track, position and cover from MPRIS (libplayerctl); covers turned black and white |
+| `spotify.py` | Track, position and cover from MPRIS (libplayerctl) |
 | `audio.py` | Spotify's audio stream through `parec`, analysed every 10.7 ms into spectrum levels and the beat pulse; reads the output latency from PipeWire |
 | `follow.py` | The `--with-spotify` watcher: waits on D-Bus for Spotify to appear or quit |
 | `settings.py`, `prefs.py` | Saved settings, color presets and the settings window |
 | `hypr.py` | Hyprland IPC, for precise dragging |
+| `media.py` | The track record and covers, turned black and white (shared by every platform) |
+| `vinyl_desktop.py`, `desktop/` | Windows and macOS: a Qt overlay drawing the same shader off screen; Spotify through the system media controls (Windows) or AppleScript (macOS); sound through WASAPI loopback (Windows) or ScreenCaptureKit (macOS) |
+| `packaging/`, `.github/workflows/desktop.yml` | Builds the Windows installer and macOS disk images on GitHub Actions (PyInstaller, Inno Setup) |

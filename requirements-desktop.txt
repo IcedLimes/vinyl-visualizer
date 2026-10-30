@@ -1,0 +1,20 @@
+# Vinyl for Windows and macOS (vinyl_desktop.py). The Linux app uses requirements.txt.
+moderngl>=5.10
+numpy>=1.26
+pillow>=10
+PySide6-Essentials>=6.7
+
+# Windows: Spotify through the system media controls, sound through WASAPI loopback
+soundcard>=0.4.3; sys_platform == "win32"
+winrt-runtime>=2.2; sys_platform == "win32"
+winrt-Windows.Foundation>=2.2; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.2; sys_platform == "win32"
+winrt-Windows.Media.Control>=2.2; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.2; sys_platform == "win32"
+
+# macOS: Spotify through AppleScript, its sound through ScreenCaptureKit
+pyobjc-core>=10.1; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.1; sys_platform == "darwin"
+pyobjc-framework-CoreMedia>=10.1; sys_platform == "darwin"
+pyobjc-framework-libdispatch>=10.1; sys_platform == "darwin"
+pyobjc-framework-ScreenCaptureKit>=10.1; sys_platform == "darwin"
