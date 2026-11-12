@@ -45,6 +45,7 @@ jobs:
           pip install -r requirements-desktop.txt pyinstaller
 
       - name: Self-test (from source)
+        timeout-minutes: 5
         shell: bash
         run: |
           status=0
@@ -60,6 +61,7 @@ jobs:
         run: pyinstaller --noconfirm packaging/vinyl.spec
 
       - name: Self-test (package, Windows)
+        timeout-minutes: 5
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -69,6 +71,7 @@ jobs:
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
 
       - name: Self-test (package, macOS)
+        timeout-minutes: 5
         if: runner.os == 'macOS'
         run: |
           status=0
@@ -115,6 +118,7 @@ jobs:
       # window calls run against real windows. Not every CI machine has a
       # desktop session, so this only reports.
       - name: Self-test on the desktop
+        timeout-minutes: 5
         continue-on-error: true
         shell: bash
         env:
@@ -129,6 +133,7 @@ jobs:
       # record once with Mesa's software renderer instead. Last, so the build
       # above can't pick up Mesa's DLLs.
       - name: OpenGL check with Mesa (Windows)
+        timeout-minutes: 5
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: pwsh
