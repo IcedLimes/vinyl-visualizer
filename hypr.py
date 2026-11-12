@@ -6,17 +6,28 @@ import json
 import os
 import socket
 
+from gi.repository import Gio, GLib
 
-def command(text):
-    """A request to Hyprland; its reply as text, or None outside Hyprland."""
+_watches = []  # event connections, kept open for as long as the program runs
+
+
+def _socket_path(name):
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
     if not runtime or not instance:
         return None
+    return os.path.join(runtime, "hypr", instance, name)
+
+
+def command(text):
+    """A request to Hyprland; its reply as text, or None outside Hyprland."""
+    path = _socket_path(".socket.sock")
+    if not path:
+        return None
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.2)
-            sock.connect(os.path.join(runtime, "hypr", instance, ".socket.sock"))
+            sock.connect(path)
             sock.sendall(text.encode())
             chunks = []
             while data := sock.recv(65536):
@@ -50,4 +61,38 @@ def monitors():
         found.append({"name": m["name"], "x": m["x"], "y": m["y"],
                       "width": round(w), "height": round(h), "focused": m.get("focused", False)})
     return found
+
+
+def active_window():
+    """The focused window: class, at, size, fullscreen..., or None."""
+    win = request("activewindow")
+    return win if isinstance(win, dict) and win.get("at") and win.get("size") else None
+
+
+def watch(on_event):
+    """Calls on_event(name) for each event Hyprland reports (focus moving,
+    windows opening, closing, going fullscreen...), read from the GLib main
+    loop without blocking it. False outside Hyprland."""
+    path = _socket_path(".socket2.sock")
+    if not path:
+        return False
+    try:
+        conn = Gio.SocketClient().connect(Gio.UnixSocketAddress.new(path), None)
+    except GLib.Error:
+        return False
+    stream = Gio.DataInputStream.new(conn.get_input_stream())
+
+    def got(_stream, result):
+        try:
+            line, _length = stream.read_line_finish(result)
+        except GLib.Error:
+            return
+        if line is None:  # Hyprland closed it
+            return
+        on_event(bytes(line).decode(errors="replace").partition(">>")[0])
+        stream.read_line_async(GLib.PRIORITY_DEFAULT, None, got)
+
+    stream.read_line_async(GLib.PRIORITY_DEFAULT, None, got)
+    _watches.append((conn, stream))
+    return True
 

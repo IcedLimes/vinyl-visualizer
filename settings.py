@@ -32,7 +32,7 @@ DEFAULTS = {
     "x": None,                # overlay's top-left on its monitor; None = right edge, centred
     "y": None,
     "monitor": None,          # the monitor's name (Hyprland's, or the screen's on Windows and macOS)
-    "layer": "top",           # "top": above windows; "bottom": on the desktop, under windows
+    "layer": "top",           # "top": above windows, fullscreen ones too; "bottom": on the desktop, under windows
     "style": "picture",       # "picture": cover across the record; "label": black vinyl, cover label
     "rpm": 8.0,
     "visualizer": 0.4,        # spectrum ring strength; 0 turns it off

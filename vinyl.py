@@ -10,6 +10,7 @@ hides it; --with-spotify keeps it opening and closing along with Spotify.
 import argparse
 import math
 import os
+import re
 import signal
 import sys
 import time
@@ -46,6 +47,9 @@ MIN_SIZE, MAX_SIZE = 120, 1400
 EDGE_GAP = 48                   # first placement: this far in from the right edge
 FPS, IDLE_FPS = 60, 10
 GLIDE = 0.6                     # seconds to glide into (or back out of) a dock
+# Windows that are games, and opaque (the EVA desktop's list, quickshell/eva/Eva.qml)
+GAME = re.compile(r"^(org\.vinegarhq\.(sober|vinegar)|steam_app_\d+|gamescope|.+\.exe"
+                  r"|minecraft.*|com\.mojang\..+)$", re.IGNORECASE)
 
 
 def parser():
@@ -141,6 +145,9 @@ class Overlay:
         self._timer = 0
         self._fps = 0
         self._last = time.monotonic()
+        self._hidden = False      # all of it behind a game: not drawn (see _check_hidden)
+        self._hidden_check = 0
+        self._hidden_soon = False  # that check is the quick one after an event
 
         self.window = self._build_window()
         self.analyzer = Analyzer()
@@ -150,6 +157,8 @@ class Overlay:
         self._apply()
         self.window.show_all()
         self._run_at(FPS)
+        if _layer_shell() and hypr.watch(self._hypr_event):
+            self._look_again()
 
     # ---- window --------------------------------------------------------
 
@@ -223,7 +232,9 @@ class Overlay:
         self.label.set_margin_start(max(0, round(lay.cx - 1.2 * lay.radius)))
         self.label.set_margin_bottom(2)
         if _layer_shell():
-            layer = GtkLayerShell.Layer.TOP if s["layer"] == "top" else GtkLayerShell.Layer.BOTTOM
+            # "top" is the overlay layer: Hyprland hides the top layer under a
+            # fullscreen window (a game), which put the record behind it
+            layer = GtkLayerShell.Layer.OVERLAY if s["layer"] == "top" else GtkLayerShell.Layer.BOTTOM
             GtkLayerShell.set_layer(self.window, layer)
         self._place()
 
@@ -313,6 +324,7 @@ class Overlay:
             self.prefs.sync()
         self._save_soon()
         self._run_at(FPS)
+        self._look_again()  # moved to the top layer, say: over the game
 
     def reset_settings(self, position=False):
         keep = ("follow_tracks",) if position else ("x", "y", "monitor", "follow_tracks")
@@ -449,20 +461,66 @@ class Overlay:
         self.info = _ease(self.info, show_info, dt, 0.15)
         self.label.set_opacity(self.info * v.opacity)
         self._update_input()
-        self.area.queue_render()
+        if not self._hidden:
+            self.area.queue_render()
 
         moving = any(abs(getattr(v, k) - goal) > 1e-3 for k, goal in targets.items())
         if self._glide:
             self._step_glide(now)
         busy = (sp.playing or self.speed > 1e-3 or moving or not self.analyzer.quiet or self._glide
                 or abs(self.info - show_info) > 1e-3 or (self.disc and not self.disc.settled))
-        fps = FPS if busy else IDLE_FPS
+        fps = FPS if busy and not self._hidden else IDLE_FPS
         if fps != self._fps:
             self._timer = 0
             self._fps = 0
             self._run_at(fps)
             return GLib.SOURCE_REMOVE
         return GLib.SOURCE_CONTINUE
+
+    # ---- hidden behind a game ------------------------------------------
+
+    def _hypr_event(self, name):
+        # Focus moving, windows opening, closing, going fullscreen; not title
+        # changes, which some apps send many times a second.
+        if not name.startswith("windowtitle"):
+            self._look_again()
+
+    def _look_again(self):
+        """Checks shortly whether the record is hidden behind a game."""
+        if self._hidden_soon:
+            return
+        if self._hidden_check:  # the once-a-second look while hidden
+            GLib.source_remove(self._hidden_check)
+        self._hidden_soon = True
+        self._hidden_check = GLib.timeout_add(100, self._check_hidden)
+
+    def _check_hidden(self):
+        """Under windows, with a game in front covering all of it, none of the
+        record shows. Drawing it 60 times a second then still costs the GPU and
+        the compositor (on an iGPU, a fifth of it), which leaves less for the
+        game. So it isn't drawn then: it carries on turning and listening at the
+        idle rate, and is drawn again as soon as any of it could show."""
+        self._hidden_check, self._hidden_soon = 0, False
+        hidden = self._behind_game()
+        if hidden != self._hidden:
+            self._hidden = hidden
+            self._run_at(FPS)  # drawn again at once, or settles to the idle rate
+        if hidden:  # resizing a window sends no event: look again in a second
+            self._hidden_check = GLib.timeout_add(1000, self._check_hidden)
+        return GLib.SOURCE_REMOVE
+
+    def _behind_game(self):
+        s, lay = self.settings, self.layout
+        if (not _layer_shell() or s["layer"] != "bottom" or not self.window.get_visible()
+                or self._press or self._glide or self._menu_open):
+            return False
+        win = hypr.active_window()
+        if not win or win.get("hidden") or not GAME.match(win.get("class") or ""):
+            return False
+        mon = self._monitor()
+        x, y = mon["x"] + s["x"], mon["y"] + s["y"]
+        (wx, wy), (ww, wh) = win["at"], win["size"]
+        return wx <= x and wy <= y and x + lay.width <= wx + ww and y + lay.height <= wy + wh
 
     # ---- input ---------------------------------------------------------
 
