@@ -12,9 +12,11 @@ winrt-Windows.Foundation.Collections>=2.2; sys_platform == "win32"
 winrt-Windows.Media.Control>=2.2; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=2.2; sys_platform == "win32"
 
-# macOS: Spotify through AppleScript, its sound through ScreenCaptureKit
-pyobjc-core>=10.1; sys_platform == "darwin"
-pyobjc-framework-Cocoa>=10.1; sys_platform == "darwin"
-pyobjc-framework-CoreMedia>=10.1; sys_platform == "darwin"
-pyobjc-framework-libdispatch>=10.1; sys_platform == "darwin"
-pyobjc-framework-ScreenCaptureKit>=10.1; sys_platform == "darwin"
+# macOS: Spotify through AppleScript, its sound through ScreenCaptureKit.
+# PyObjC 13.0's CoreMedia doesn't load on Intel Macs (it can't find
+# libswiftCoreMedia), so stay on 12 until that's fixed.
+pyobjc-core>=10.1,<13; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.1,<13; sys_platform == "darwin"
+pyobjc-framework-CoreMedia>=10.1,<13; sys_platform == "darwin"
+pyobjc-framework-libdispatch>=10.1,<13; sys_platform == "darwin"
+pyobjc-framework-ScreenCaptureKit>=10.1,<13; sys_platform == "darwin"
