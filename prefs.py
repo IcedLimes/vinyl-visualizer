@@ -31,7 +31,7 @@ class Prefs(Gtk.Window):
         self._combo("Sits", "layer", [("top", "Above windows"), ("bottom", "On the desktop")])
         self._switch("Vocals first", "vocals_first")
         self._switch("Tonearm", "tonearm")
-        self._switch("Hide while Spotify is closed", "hide_when_closed")
+        self._switch("Hide while no music app is open", "hide_when_closed")
 
         names = [(name, name) for name in config.presets()] + [("Custom", "Custom")]
         self._combo("Colors", "preset", names, on_change=self._pick_preset)

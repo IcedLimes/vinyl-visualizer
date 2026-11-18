@@ -4,7 +4,7 @@
 #
 #   ./install.sh               install, or update after a git pull
 #   ./install.sh --autostart   also start with your session (via XDG autostart),
-#                              opening and closing along with Spotify
+#                              opening and closing along with Spotify or YouTube Music
 #   ./install.sh --uninstall   remove everything this script added
 set -e
 cd "$(dirname "$0")"
@@ -121,7 +121,7 @@ cat > "$MENU" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Vinyl
-Comment=A spinning record for what Spotify is playing (launch again to show or hide)
+Comment=A spinning record for what Spotify or YouTube Music is playing (launch again to show or hide)
 Exec=$BIN
 Icon=media-optical-audio
 Terminal=false
@@ -133,8 +133,8 @@ if [ "$1" = "--autostart" ]; then
     cat > "$AUTOSTART" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Vinyl (with Spotify)
-Comment=Opens the Vinyl overlay when Spotify starts and closes it when Spotify quits
+Name=Vinyl (with Spotify or YouTube Music)
+Comment=Opens the Vinyl overlay when Spotify or YouTube Music starts and closes it when they quit
 Exec=$BIN --with-spotify
 Icon=media-optical-audio
 Terminal=false
@@ -152,7 +152,7 @@ if [ -n "$optional" ]; then
 fi
 if [ "$1" = "--autostart" ]; then
     say ""
-    say "It will start with your session and open whenever Spotify does."
+    say "It will start with your session and open whenever Spotify or YouTube Music does."
     say "(Hyprland and Sway don't run XDG autostart; see the README for their one-line setup.)"
 fi
 case ":$PATH:" in

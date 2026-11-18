@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Vinyl: what Spotify is playing, as a black-and-white record slowly spinning
-over your desktop.
+"""Vinyl: what Spotify or YouTube Music is playing, as a black-and-white record
+slowly spinning over your desktop.
 
 Click the middle of the record to play or pause, drag it to move it, scroll on
 it to resize, right-click for the menu and settings. Running vinyl-visualizer again shows or
-hides it; --with-spotify keeps it opening and closing along with Spotify.
+hides it; --with-spotify keeps it opening and closing along with the music app.
 """
 
 import argparse
@@ -38,7 +38,7 @@ from audio import Analyzer, Capture, display_delay  # noqa: E402
 from disc import ARM_REST, PULSE_MAX, Disc, Layout, View, arm_angle  # noqa: E402
 from dock import Dock  # noqa: E402
 from prefs import Prefs  # noqa: E402
-from spotify import Spotify  # noqa: E402
+from mpris import Player  # noqa: E402
 
 APP_ID = "io.github.vinyl_visualizer"
 NAMESPACE = "vinyl-visualizer"  # layer-shell namespace, for Hyprland layer rules
@@ -70,11 +70,13 @@ def parser():
     ap.add_argument("--show", action="store_true", help="open or show it (never hides)")
     ap.add_argument("--quit", action="store_true", help="close the running overlay")
     ap.add_argument("--with-spotify", action="store_true",
-                    help="stay in the background, opening the overlay when Spotify starts "
-                         "and closing it when Spotify quits")
-    ap.add_argument("--audio", choices=["spotify", "system"], default="spotify",
-                    help="react to Spotify only (default) or to everything you hear")
-    ap.add_argument("--player", default="spotify", help="MPRIS player to follow (see playerctl -l)")
+                    help="stay in the background, opening the overlay when Spotify or YouTube "
+                         "Music starts and closing it when they've quit")
+    ap.add_argument("--audio", choices=["player", "spotify", "system"], default="player",
+                    help="react to the music app only (default) or to everything you hear")
+    ap.add_argument("--player", default="auto",
+                    help="follow only this MPRIS player (see playerctl -l); "
+                         "default: Spotify and YouTube Music")
     return ap
 
 
@@ -153,7 +155,7 @@ class Overlay:
         self.analyzer = Analyzer()
         self.capture = Capture(args.audio)
         self.capture.start()
-        self.spotify = Spotify(args.player, on_change=self._on_track, on_cover=self._on_cover)
+        self.player = Player(args.player, on_change=self._on_track, on_cover=self._on_cover)
         self._apply()
         self.window.show_all()
         self._run_at(FPS)
@@ -299,7 +301,7 @@ class Overlay:
         self.window.input_shape_combine_region(region)
 
     def _update_label(self):
-        track = self.spotify.track
+        track = self.player.track
         if not track.title or self.settings["track_info"] == "off":
             self.label.set_markup("")
             return
@@ -372,9 +374,10 @@ class Overlay:
         config.save(self.settings)
         self.capture.stop()
 
-    # ---- Spotify -------------------------------------------------------
+    # ---- the music app -------------------------------------------------
 
     def _on_track(self):
+        self.capture.listen_to(self.player.source)  # it may be another app now
         self._update_label()
         self._run_at(FPS)
 
@@ -424,7 +427,7 @@ class Overlay:
         now = time.monotonic()
         dt = min(now - self._last, 0.1)
         self._last = now
-        s, v, sp = self.settings, self.view, self.spotify
+        s, v, sp = self.settings, self.view, self.player
 
         # Like a turntable: a gentle spin-up on play, a longer coast down on pause.
         target = s["rpm"] * math.tau / 60 if sp.playing else 0.0
@@ -477,7 +480,7 @@ class Overlay:
             return GLib.SOURCE_REMOVE
         return GLib.SOURCE_CONTINUE
 
-    # ---- hidden behind a game ------------------------------------------
+    # ---- hidden behind a window ----------------------------------------
 
     def _hypr_event(self, name):
         # Focus moving, windows opening, closing, going fullscreen; not title
@@ -486,7 +489,7 @@ class Overlay:
             self._look_again()
 
     def _look_again(self):
-        """Checks shortly whether the record is hidden behind a game."""
+        """Checks shortly whether the record is hidden behind a window."""
         if self._hidden_soon:
             return
         if self._hidden_check:  # the once-a-second look while hidden
@@ -495,13 +498,16 @@ class Overlay:
         self._hidden_check = GLib.timeout_add(100, self._check_hidden)
 
     def _check_hidden(self):
-        """Under windows, with a game in front covering all of it, none of the
-        record shows. Drawing it 60 times a second then still costs the GPU and
-        the compositor (on an iGPU, a fifth of it), which leaves less for the
-        game. So it isn't drawn then: it carries on turning and listening at the
-        idle rate, and is drawn again as soon as any of it could show."""
+        """Under windows, with one in front covering all of it, none of the
+        record shows: a game, or any window when Hyprland's glass is xray
+        (decoration:blur:xray), which shows the record only heavily blurred,
+        where its turning can't be told apart. Drawing it 60 times a second then
+        still costs the GPU and the compositor (on an iGPU, a quarter of it),
+        which leaves less for everything else. So it isn't drawn then: it
+        carries on turning and listening at the idle rate, and is drawn again
+        as soon as any of it could show."""
         self._hidden_check, self._hidden_soon = 0, False
-        hidden = self._behind_game()
+        hidden = self._covered()
         if hidden != self._hidden:
             self._hidden = hidden
             self._run_at(FPS)  # drawn again at once, or settles to the idle rate
@@ -509,18 +515,24 @@ class Overlay:
             self._hidden_check = GLib.timeout_add(1000, self._check_hidden)
         return GLib.SOURCE_REMOVE
 
-    def _behind_game(self):
+    def _covered(self):
         s, lay = self.settings, self.layout
         if (not _layer_shell() or s["layer"] != "bottom" or not self.window.get_visible()
                 or self._press or self._glide or self._menu_open):
             return False
-        win = hypr.active_window()
-        if not win or win.get("hidden") or not GAME.match(win.get("class") or ""):
-            return False
         mon = self._monitor()
         x, y = mon["x"] + s["x"], mon["y"] + s["y"]
-        (wx, wy), (ww, wh) = win["at"], win["size"]
-        return wx <= x and wy <= y and x + lay.width <= wx + ww and y + lay.height <= wy + wh
+        shown = next((m["activeWorkspace"]["id"] for m in hypr.request("monitors") or []
+                      if m["name"] == mon["name"]), None)
+        glass = hypr.option("decoration:blur:enabled") and hypr.option("decoration:blur:xray")
+        for win in hypr.request("clients") or []:
+            if (not win.get("mapped") or win.get("hidden") or win["workspace"]["id"] != shown
+                    or not (glass or GAME.match(win.get("class") or ""))):
+                continue
+            (wx, wy), (ww, wh) = win["at"], win["size"]
+            if wx <= x and wy <= y and x + lay.width <= wx + ww and y + lay.height <= wy + wh:
+                return True
+        return False
 
     # ---- input ---------------------------------------------------------
 
@@ -607,7 +619,7 @@ class Overlay:
             if self._press["moved"]:
                 self._drop()
             elif self.layout.reach(event.x, event.y) <= CENTER:
-                self.spotify.play_pause()
+                self.player.play_pause()
             self._press = None
             self._hold_pointer(False)
             self._motion(_area, event)
@@ -643,9 +655,9 @@ class Overlay:
     def _sync_presence(self, shown=None):
         """Tells the desktop when the record starts or stops sitting in the dock
         on screen (Rei shows only then): docked, its window up, and not faded
-        out for want of Spotify."""
+        out for want of a music app."""
         if shown is None:
-            shown = self.spotify.running or not self.settings["hide_when_closed"]
+            shown = self.player.running or not self.settings["hide_when_closed"]
         present = bool(self.dock.docked and self.dock.spec and self.window.get_visible() and shown)
         if present != self._present:
             self._present = present
@@ -666,7 +678,7 @@ class Overlay:
             else:
                 self.change(layer=before["layer"])
         if before.get("loop"):
-            self.spotify.set_loop(before["loop"])
+            self.player.set_loop(before["loop"])
         if before.get("size"):
             self._glide_to(size=before["size"], visualizer=before.get("visualizer"))
 
@@ -678,18 +690,18 @@ class Overlay:
             s = self.settings
             if first:
                 d.remember({"size": s["size"], "layer": s["layer"], "visualizer": s["visualizer"],
-                            "loop": self.spotify.loop})
+                            "loop": self.player.loop})
             d.docked, d.hovering = True, False
             # moon form: the ring swells as it glides in; under windows once it lands
             self._glide_to(size=d.size, center=d.center(), visualizer=1.0, layer="bottom")
             if first:
                 uri = d.spec.get("uri")
-                if self.spotify.has_track(uri):   # already on: carry on from where it is
-                    if not self.spotify.playing:
-                        self.spotify.play()
+                if self.player.has_track(uri):   # already on: carry on from where it is
+                    if not self.player.playing:
+                        self.player.play()
                 else:
-                    self.spotify.open_uri(uri)
-                self.spotify.set_loop("Track")
+                    self.player.open_uri(uri)
+                self.player.set_loop("Track")
                 GLib.timeout_add(2000, self._keep_looping)
             d.tell("dock")
             self._sync_presence()
@@ -704,7 +716,7 @@ class Overlay:
     def _keep_looping(self):
         """Once the docked song has started: repeat it, in case opening it reset that."""
         if self.dock.docked:
-            self.spotify.set_loop("Track")
+            self.player.set_loop("Track")
         return GLib.SOURCE_REMOVE
 
     def _glide_to(self, size, center=None, visualizer=None, layer=None):
@@ -766,10 +778,10 @@ class Overlay:
 
     def _follow(self):
         """What the pulse follows for the current song: its own choice, else the default."""
-        return self.settings["follow_tracks"].get(self.spotify.track.id, self.settings["follow"])
+        return self.settings["follow_tracks"].get(self.player.track.id, self.settings["follow"])
 
     def _set_follow(self, mode):
-        track = self.spotify.track.id
+        track = self.player.track.id
         if track:
             self.change(follow_tracks=dict(self.settings["follow_tracks"], **{track: mode}))
 
@@ -802,7 +814,7 @@ class Overlay:
         GLib.timeout_add(250, self._menu_watch)
 
     def _menu_contents(self, pop):
-        s, sp = self.settings, self.spotify
+        s, sp = self.settings, self.player
 
         def run(action):  # close first, then act (some actions resize the overlay)
             pop.popdown()
@@ -882,7 +894,7 @@ class Overlay:
 
     def _show_popup_menu(self, event):
         """The old popup menu: only for records too small to hold the popover."""
-        s, sp = self.settings, self.spotify
+        s, sp = self.settings, self.player
         menu = Gtk.Menu()
 
         def add(label, action, checked=None):

@@ -1,5 +1,5 @@
-"""Audio side: records what Spotify plays from PipeWire (through parec) and
-turns it into the spectrum ring's levels and the record's beat pulse."""
+"""Audio side: records what the music app plays from PipeWire (through parec)
+and turns it into the spectrum ring's levels and the record's beat pulse."""
 
 import collections
 import json
@@ -11,6 +11,8 @@ import threading
 import time
 
 import numpy as np
+
+import sources
 
 RATE = 48000
 FFT_SIZE = 2048
@@ -25,13 +27,15 @@ LEAD = 0.030             # land a touch before the sound: that's where sync feel
 
 
 class Capture:
-    """Keeps the newest samples of Spotify's own output stream, so system sounds
-    don't move the record. While Spotify has no stream open (it closes it after
-    a while paused) it listens to the default speakers and switches back as soon
-    as the stream reappears. source="system" always uses the speakers."""
+    """Keeps the newest samples of the music app's own output stream, so system
+    sounds don't move the record. While it has no stream open (Spotify closes
+    it after a while paused) it listens to the default speakers and switches
+    back as soon as the stream reappears. source="system" always uses the
+    speakers. listen_to() moves it to another app's stream."""
 
-    def __init__(self, source="spotify"):
-        self.source = source
+    def __init__(self, source="player", app=sources.SPOTIFY):
+        self.source = "system" if source == "system" else "player"
+        self.app = app             # whose stream to hear (a sources.Source)
         self._ring = np.zeros((RATE, 2), dtype=np.float32)  # stereo: vocals sit in the centre
         self._written = 0          # samples captured so far
         self._last_write = 0.0     # when the newest of them arrived
@@ -48,6 +52,13 @@ class Capture:
         self._stopped = True
         if self._proc:
             self._proc.kill()
+
+    def listen_to(self, app):
+        """Hear another app's stream from now on (the player followed changed)."""
+        if app is not None and app != self.app:
+            self.app = app
+            if self.source == "player" and self._proc:
+                self._proc.kill()  # _run starts over on the new app's stream
 
     def position(self):
         """(samples captured so far, monotonic time the newest one arrived)."""
@@ -69,7 +80,7 @@ class Capture:
 
     def _run(self):
         while not self._stopped:
-            stream = find_spotify_stream() if self.source == "spotify" else None
+            stream = find_stream(self.app) if self.source == "player" else None
             cmd = ["parec", "--raw", "--format=float32le", f"--rate={RATE}", "--channels=2",
                    "--latency-msec=15", "--client-name=vinyl-visualizer"]
             cmd.append(f"--monitor-stream={stream}" if stream is not None
@@ -80,18 +91,18 @@ class Capture:
             except FileNotFoundError:
                 print("vinyl: parec is not installed, so the record won't react to music")
                 return
-            self._read(proc, look_for_spotify=self.source == "spotify" and stream is None)
+            self._read(proc, look_for_app=self.source == "player" and stream is None)
             proc.kill()
             proc.wait()
             time.sleep(0.5)
 
-    def _read(self, proc, look_for_spotify):
+    def _read(self, proc, look_for_app):
         fd = proc.stdout.fileno()
         leftover = b""
         next_look = time.monotonic() + 2
         while True:
-            if look_for_spotify and time.monotonic() > next_look:
-                if find_spotify_stream() is not None:
+            if look_for_app and time.monotonic() > next_look:
+                if find_stream(self.app) is not None:
                     return
                 next_look = time.monotonic() + 2
             if not select.select([fd], [], [], 0.5)[0]:
@@ -109,7 +120,7 @@ class Capture:
 
     def _watch_latency(self):
         while not self._stopped:
-            self.output_latency = output_latency()
+            self.output_latency = output_latency(self.app)
             time.sleep(3)  # picks up a switch between speakers and headphones
 
 
@@ -121,25 +132,24 @@ def _json(*cmd):
         return None
 
 
-def spotify_streams():
-    """Spotify's playback streams (PulseAudio sink inputs), active ones first."""
+def app_streams(app):
+    """An app's playback streams (PulseAudio sink inputs), active ones first."""
     found = [s for s in _json("pactl", "-f", "json", "list", "sink-inputs") or []
-             if any("spotify" in s.get("properties", {}).get(key, "").lower()
-                    for key in ("application.name", "application.process.binary"))]
+             if sources.plays(app, s)]
     return sorted(found, key=lambda s: s.get("corked", False))
 
 
-def find_spotify_stream():
-    """Index of Spotify's playback stream, or None."""
-    streams = spotify_streams()
+def find_stream(app):
+    """Index of an app's playback stream, or None."""
+    streams = app_streams(app)
     return streams[0]["index"] if streams else None
 
 
-def output_latency():
-    """How long the output Spotify plays on takes to sound what we capture from
+def output_latency(app):
+    """How long the output the app plays on takes to sound what we capture from
     it: Bluetooth adds roughly 100-300 ms, wired outputs a few ms. PipeWire
     knows (pw-dump); pactl reports 0 for Bluetooth there, so it's the fallback."""
-    streams = spotify_streams()
+    streams = app_streams(app)
     sinks = _json("pactl", "-f", "json", "list", "sinks") or []
     sink = next((s for s in sinks if streams and s.get("index") == streams[0].get("sink")), None)
     if sink is None:

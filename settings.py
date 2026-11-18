@@ -43,7 +43,7 @@ DEFAULTS = {
     "vocals_first": True,     # while someone sings, the pulse follows their syllables
     "tonearm": True,
     "track_info": "always",   # "always", "hover" or "off"
-    "hide_when_closed": True,  # fade out while Spotify isn't running
+    "hide_when_closed": True,  # fade out while no music app is running
     "preset": "Mono",
     "dark": "#000000",
     "light": "#ffffff",

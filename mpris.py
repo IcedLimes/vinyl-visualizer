@@ -1,8 +1,9 @@
-"""Spotify side: follows the desktop client over MPRIS (through libplayerctl)
-and loads each new cover as a black-and-white image.
+"""The music side: follows Spotify and YouTube Music (see sources.py) over
+MPRIS, through libplayerctl, and loads each new cover as a black-and-white
+image. With both open, it follows whichever one is playing.
 
-The client publishes the track, its cover URL and the playback position
-itself, so this needs no Spotify developer app or login.
+The apps publish the track, its cover and the playback position themselves,
+so this needs no developer app, login or API key.
 """
 
 import threading
@@ -13,22 +14,28 @@ import gi
 gi.require_version("Playerctl", "2.0")
 from gi.repository import GLib, Playerctl  # noqa: E402
 
-_LOOPS = {"None": Playerctl.LoopStatus.NONE, "Track": Playerctl.LoopStatus.TRACK,
-          "Playlist": Playerctl.LoopStatus.PLAYLIST}
+import sources  # noqa: E402
 from media import Track, load_cover  # noqa: E402  (Track is re-exported for callers)
 
+_LOOPS = {"None": Playerctl.LoopStatus.NONE, "Track": Playerctl.LoopStatus.TRACK,
+          "Playlist": Playerctl.LoopStatus.PLAYLIST}
 
-class Spotify:
-    """Watches one MPRIS player. Runs on the GLib main loop, so every callback
-    arrives on the GTK thread. on_change() fires when the track, play state or
-    open/closed state changes; on_cover(image) when a cover is ready (None
-    means there's no cover to show)."""
 
-    def __init__(self, name="spotify", on_change=None, on_cover=None):
-        self.name = name
+class Player:
+    """Watches the music apps' MPRIS players and follows one of them: the
+    one playing, or the one that played last. Runs on the GLib main loop, so
+    every callback arrives on the GTK thread. on_change() fires when the
+    track, play state or open/closed state changes, or another app takes
+    over; on_cover(image) when a cover is ready (None means there's no cover
+    to show)."""
+
+    def __init__(self, name="auto", on_change=None, on_cover=None):
+        self.sources = sources.wanted(name)
         self.on_change = on_change or (lambda: None)
         self.on_cover = on_cover or (lambda image: None)
-        self.player = None
+        self.players = {}         # every matching player that's open: Playerctl.Player -> Source
+        self.player = None        # the one followed
+        self.source = self.sources[0]  # ...and which app it is
         self.track = Track()
         self.playing = False
         self._position = 0.0
@@ -77,10 +84,14 @@ class Spotify:
         self._call("play")
 
     def open_uri(self, uri):
-        """Plays a spotify: URI (a track, album or playlist) right away."""
-        if self.player and uri:
+        """Plays a URI right away: a spotify: one (a track, album or playlist)
+        in Spotify, whichever app is being followed."""
+        player = self.player
+        if uri and uri.startswith("spotify:"):
+            player = next((p for p, s in self.players.items() if s is sources.SPOTIFY), player)
+        if player and uri:
             try:
-                self.player.open(uri)
+                player.open(uri)
             except GLib.Error:
                 pass
 
@@ -109,38 +120,69 @@ class Spotify:
             except GLib.Error:
                 pass
 
+    # ---- which player -----------------------------------------------------
+
     def _scan(self):
         for name in self.manager.props.player_names:
             self._appeared(self.manager, name)
         return GLib.SOURCE_REMOVE
 
-    def _appeared(self, manager, name):
-        if name.name != self.name or self.player:
+    def _appeared(self, manager, name, retry=True):
+        source = sources.source_for(name.instance, self.sources)
+        if source is None:
+            if retry and not sources.identity(name.instance):
+                # just appeared and not answering yet: ask again in a moment
+                GLib.timeout_add(1000, lambda: self._appeared(manager, name, False) and False)
+            return
+        if any(p.props.player_instance == name.instance for p in self.players):
             return
         try:
             player = Playerctl.Player.new_from_name(name)
         except GLib.Error:
             return
-        player.connect("playback-status", lambda *_: self._refresh())
-        player.connect("metadata", lambda *_: self._refresh())
-        player.connect("seeked", lambda *_: self._read_position())
+        player.connect("playback-status", self._status_changed)
+        player.connect("metadata", lambda p, *_: p is self.player and self._refresh())
+        player.connect("seeked", lambda p, *_: p is self.player and self._read_position())
         manager.manage_player(player)
-        self.player = player
-        self._refresh()
+        self.players[player] = source
+        if self.player is None or (_is_playing(player) and not self.playing):
+            self._follow(player)
 
     def _vanished(self, manager, player):
+        if self.players.pop(player, None) is not None and player is self.player:
+            # carry on with another open one, playing if any is
+            others = sorted(self.players, key=_is_playing, reverse=True)
+            self._follow(others[0] if others else None)
+
+    def _status_changed(self, player, *_):
         if player is self.player:
-            self.player = None
             self._refresh()
+        elif _is_playing(player):  # another app started playing: follow it
+            self._follow(player)
+
+    def _follow(self, player):
+        self.player = player
+        self.source = self.players.get(player, self.source)
+        self._refresh()
+
+    # ---- the followed player ----------------------------------------------
 
     def _refresh(self):
         player = self.player
         if player:
-            self.playing = player.props.playback_status == Playerctl.PlaybackStatus.PLAYING
+            self.playing = _is_playing(player)
+            title = _read(player.get_title)
+            artist = _read(player.get_artist)
+            # an object path, printed in quotes: '/com/spotify/track/...'
+            track_id = _read(lambda: player.print_metadata_prop("mpris:trackid")).strip("'")
+            if track_id.startswith("/org/chromium/"):
+                # Electron's generic player numbers tracks as it goes: name
+                # the song instead, so per-song choices stick.
+                track_id = f"{self.source.key}:{artist}\n{title}"
             self.track = Track(
-                id=_read(lambda: player.print_metadata_prop("mpris:trackid")),
-                title=_read(player.get_title),
-                artist=_read(player.get_artist),
+                id=track_id,
+                title=title,
+                artist=artist,
                 art_url=_read(lambda: player.print_metadata_prop("mpris:artUrl")),
                 length=_number(_read(lambda: player.print_metadata_prop("mpris:length"))) / 1e6,
             )
@@ -184,6 +226,13 @@ class Spotify:
         if url == self._cover_url:  # skip it if the track changed meanwhile
             self.on_cover(image)
         return GLib.SOURCE_REMOVE
+
+
+def _is_playing(player):
+    try:
+        return player.props.playback_status == Playerctl.PlaybackStatus.PLAYING
+    except GLib.Error:
+        return False
 
 
 def _read(getter):

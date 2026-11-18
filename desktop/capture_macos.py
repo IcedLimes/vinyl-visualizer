@@ -76,7 +76,7 @@ class SpotifyCapture(Capture):
         running copy of it, so a restarted Spotify needs a new stream."""
         retry_at = 0.0
         while not self._stopped:
-            pid = self._spotify_pid() if self.source == "spotify" else 0
+            pid = self._spotify_pid() if self.source != "system" else 0
             if pid != self._pid or (pid is not None and self._stream is None):
                 self._end()
                 self._pid = pid
@@ -100,7 +100,7 @@ class SpotifyCapture(Capture):
         displays = content.displays()
         if not displays:
             return False
-        if self.source == "spotify":
+        if self.source != "system":
             apps = [a for a in content.applications() if a.bundleIdentifier() == SPOTIFY]
             if not apps:
                 return False

@@ -1,8 +1,9 @@
 # Vinyl
 
-A minimal Spotify visualizer for Linux: the current track's cover, in black and
-white, on a slowly spinning record that floats over your desktop. Windows and
-macOS versions are [in testing](#windows-and-macos-experimental).
+A minimal music visualizer for Linux, for Spotify and YouTube Music: the
+current track's cover, in black and white, on a slowly spinning record that
+floats over your desktop. Windows and macOS versions are
+[in testing](#windows-and-macos-experimental).
 
 ![Vinyl as a picture disc and as black vinyl with the cover as its label](docs/preview.png)
 
@@ -19,15 +20,18 @@ macOS versions are [in testing](#windows-and-macos-experimental).
 - **A faint ring of ticks** around the rim follows the spectrum.
 - **It's an overlay, not a window**: no title bar, nothing in your taskbar,
   and clicks pass through everywhere except the record.
-- **It can open and close with Spotify** on its own.
+- **It can open and close with your music app** on its own.
 
-It needs no Spotify account setup or API keys. It reads the track and cover
-from the Spotify desktop app over MPRIS. It listens only to Spotify's own audio
-stream, so notifications and other apps don't move it.
+It needs no account setup or API keys. It reads the track and cover from the
+music app over MPRIS, and listens only to that app's own audio stream, so
+notifications and other apps don't move it. With Spotify and YouTube Music both
+open, it follows whichever one is playing.
 
 ## Requirements (Linux)
 
-- Linux with the **Spotify desktop app**
+- Linux with the **Spotify desktop app** or **YouTube Music** as the
+  [Pear Desktop](https://github.com/pear-devs/pear-desktop) app (formerly
+  th-ch's YouTube Music). Web players in a browser aren't followed.
 - **PipeWire** (with pipewire-pulse) or **PulseAudio**
 - **Python 3.9+**, **GTK 3** with PyGObject, and **playerctl**
 - For the overlay: a Wayland compositor with layer-shell support, such as
@@ -90,7 +94,7 @@ To run it from source instead: `pip install -r requirements-desktop.txt`, then
 
 ## Use
 
-Start Spotify, then run `vinyl-visualizer` or open **Vinyl** from your app
+Start Spotify or YouTube Music, then run `vinyl-visualizer` or open **Vinyl** from your app
 menu. Running it again hides it, and again shows it, which works well on a
 keyboard shortcut.
 
@@ -104,10 +108,19 @@ keyboard shortcut.
 Vinyl never takes keyboard input, so your keys always go to the window
 you're using.
 
-## Open and close with Spotify
+## YouTube Music
+
+Vinyl follows the Pear Desktop app as it is. Out of the box the app shares
+only a small 150 px cover, which looks soft on a large record. For a sharp one,
+turn on its **Shortcuts (& MPRIS)** plugin (Plugins menu) and restart it:
+Vinyl then fetches the cover at 1200 px.
+
+## Open and close with your music app
 
 `vinyl-visualizer --with-spotify` waits quietly in the background. It opens
-Vinyl when Spotify starts and closes it when Spotify quits. To have it start
+Vinyl when Spotify or YouTube Music starts and closes it once they've both
+quit. (The option keeps its old name so existing start-up lines keep working.)
+To have it start
 with your session:
 
 | Desktop | Setup |
@@ -120,7 +133,7 @@ with your session:
 | river (`init`) | `riverctl spawn "vinyl-visualizer --with-spotify"` |
 
 It takes effect at your next login. To start it now, run the same command
-once. If you quit Vinyl from its menu, it stays closed until Spotify next
+once. If you quit Vinyl from its menu, it stays closed until a music app next
 starts.
 
 ## Settings
@@ -142,7 +155,7 @@ Right-click the record and choose **Settings…**, or run
 | Track info | Always | Title and artist under the record: always, on hover or off. |
 | Sits | Above windows | Or on the desktop, under your windows. |
 | Tonearm | On | |
-| Hide while Spotify is closed | On | Fades out, and lets clicks through, while Spotify isn't running. |
+| Hide while no music app is open | On | Fades out, and lets clicks through, while neither Spotify nor YouTube Music is running. |
 | Colors | Mono | The record is a duotone from **Shadows** to **Highlights** (black to white by default). **Accent** colors the ring, tonearm and text. Presets: Mono, Sepia, Slate, Crimson. |
 
 Most settings also work from the command line. If Vinyl is already running,
@@ -158,21 +171,22 @@ vinyl-visualizer --quit
 
 These two take effect when Vinyl starts:
 
-- `--audio system` reacts to everything you hear, not only Spotify.
-- `--player NAME` follows another MPRIS player instead of Spotify. Run
-  `playerctl -l` to see their names.
+- `--audio system` reacts to everything you hear, not only the music app.
+- `--player NAME` follows only that MPRIS player (`spotify`, `youtube-music`,
+  or another app's). Run `playerctl -l` to see their names.
 
 Run `vinyl-visualizer --help` for the full list.
 
 ## Troubleshooting
 
 - **The ring and beat pulse don't move.** Vinyl needs `parec` and `pactl`
-  (see Requirements). If Spotify's stream isn't found, it listens to your
+  (see Requirements). If the app's stream isn't found, it listens to your
   default output instead.
 - **It opens as a normal window instead of an overlay.** Your desktop doesn't
   support layer-shell (GNOME, for example), or gtk-layer-shell isn't installed.
-- **No cover or track info.** Vinyl follows the Spotify desktop app, not the
-  web player. Check that `playerctl -l` lists `spotify`.
+- **No cover or track info.** Vinyl follows the Spotify and Pear Desktop
+  apps, not web players. Check that `playerctl -l` lists `spotify`, or for
+  YouTube Music `YoutubeMusic` or a `chromium.instance…` player.
 - **Clicking the record flashes your minimized windows (Hyprland).** If you
   minimize windows to a special workspace, Hyprland hands focus back to the
   last window you used when you click an overlay, even a minimized one, and
@@ -199,9 +213,10 @@ remove that too.
 | --- | --- |
 | `vinyl.py` | The overlay: GTK 3 layer-shell window, mouse and keyboard, menu, animation |
 | `disc.frag`, `disc.py` | The record, ring and tonearm, drawn by one OpenGL shader (moderngl) |
-| `spotify.py` | Track, position and cover from MPRIS (libplayerctl) |
-| `audio.py` | Spotify's audio stream through `parec`, analysed every 10.7 ms into spectrum levels and the beat pulse; reads the output latency from PipeWire |
-| `follow.py` | The `--with-spotify` watcher: waits on D-Bus for Spotify to appear or quit |
+| `mpris.py` | Track, position and cover from MPRIS (libplayerctl), following whichever music app is playing |
+| `sources.py` | The music apps Vinyl follows and how to recognise each one's player and audio stream |
+| `audio.py` | The app's audio stream through `parec`, analysed every 10.7 ms into spectrum levels and the beat pulse; reads the output latency from PipeWire |
+| `follow.py` | The `--with-spotify` watcher: waits on D-Bus for a music app to appear or quit |
 | `settings.py`, `prefs.py` | Saved settings, color presets and the settings window |
 | `hypr.py` | Hyprland IPC, for precise dragging |
 | `media.py` | The track record and covers, turned black and white (shared by every platform) |
